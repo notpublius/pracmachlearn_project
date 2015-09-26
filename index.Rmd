@@ -1,0 +1,83 @@
+---
+title: "Practical Machine Learning Project"
+author: "Not Publius"
+date: "September 26, 2015"
+output: html_document
+---
+
+```{r, echo=FALSE, message=FALSE}
+# Download the training data set.
+get_url <- function(url) {
+  file <- basename(url)
+  if( ! file.exists(file)) {
+    download.file(url, file, method='curl') 
+  }
+  file
+}
+data <- read.csv(get_url('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'))
+
+# Set the PRNG seed.
+set.seed(314159)
+
+# Load all the required libraries for the analysis
+library(caret)
+library(reshape2)
+library(ggplot2)
+```
+
+## Introduction
+
+This report presents a summary of the model building exercise completed for the Practical Machine Learning project. The goal of the project was to develop a model for predicting of weightlifters performed a certain exercise according to correct, or one of 4 "incorrect" forms. The data to drive the predictions were gathered from accelerometers on the belt, forearm, arm, and dumbell.
+
+First, we partition the data into a training and test set, assigning 60% of the data to the training set.
+```{r, echo=TRUE}
+idx <- createDataPartition(data$classe, p=0.6, list = FALSE)
+train <- data[idx,]
+test <- data[-idx,]
+```
+
+Investigating the observations, there are several variables that seem poor candidates for the model. Things such as the time the exercise was performed and the individual performing the exercise. Ideally, we should be able to predict the "form" of the lift based solely on the accelerometer data. Of particular interest to this investigator were the "pitch", "roll", and "yaw" measurements. These seemed like strong candidates, since these measure one's rotational orientation and how one bends one's body during a lift is paramount to proper form. So, we create a vector calling out these observations:
+```{r, echo=TRUE}
+sensor = c('belt','arm','dumbbell','forearm')
+vars <- c('classe')
+vars <- c(vars,paste("pitch_",sensor,sep=""))
+vars <- c(vars,paste("roll_",sensor,sep=""))
+vars <- c(vars,paste("yaw_",sensor,sep=""))
+```
+
+## Model Building and Cross-Validation Performance
+
+We then fit a random forest model, using 10-fold cross-validation, to the training dataset. To speed up the computations, we allow only 3 variables to be sampled at each split in the tree building. (Note: The model is also saved to disk to increase perforamce.)
+```{r, echo=TRUE}
+save_model_file = 'RF.Rdata'
+if (file.exists(save_model_file)) {
+  load(save_model_file)
+} else {
+  fitControl <- trainControl(method = "cv")
+  tgrid  <- expand.grid(mtry=c(3)) 
+  mdl  <- train(classe ~ ., data = train[,vars], method = "rf", trControl = fitControl, tuneGrid = tgrid)
+  save(mdl, file=save_model_file)
+}
+```
+This model has a cross-validation prediction accuracy of `r mdl$results$Accuracy`.
+
+## Out-of-Sample (Test Set) Performance
+
+Using this model and the reserved test set, we can get an estimate of the out-of-sample accuracy.
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+cm <- confusionMatrix(predict(mdl, test), test$classe)
+```
+The out-of-sample accuracy estimate is `r cm$overall['Accuracy']`. The confusion matrix is shown below:
+```{r, echo=FALSE}
+print(cm)
+```
+The confusion matrix can be visualized as well:
+```{r, echo=TRUE}
+ggplot(melt(cm$table)) + geom_tile(aes(x=Prediction,y=Reference,fill=log10(value)))
+```
+
+This model was then used to predict against the evaluation set, with the results submitted to the submission site.
+```{r, echo=TRUE}
+evaldata <- read.csv(get_url('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'))
+preds <- predict(mdl, evaldata)
+```
